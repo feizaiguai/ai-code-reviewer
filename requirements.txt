@@ -1,12 +1,2 @@
-# AI Code Reviewer - Dependencies
-# Python 3.8+
-
-# No external dependencies required!
-# Uses only Python standard library:
-# - ast (built-in)
-# - pathlib (built-in)
-# - dataclasses (built-in)
-# - typing (built-in)
-# - json (built-in)
-# - re (built-in)
-# - os (built-in)
+colorama>=0.4.6
+astroid>=3.0.0
