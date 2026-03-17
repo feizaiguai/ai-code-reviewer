@@ -1,14 +1,13 @@
 # AI Code Reviewer
 
-🤖 智能代码审查工具 - 自动分析代码并提供风格、潜在bug和性能优化建议
+一个智能 Python 代码审查工具，自动分析代码并给出 review 建议。
 
 ## 功能特性
 
-- **代码风格检查**: 检查行长度、缩进、import顺序等
-- **潜在Bug检测**: 检测可变默认参数、None比较、裸except等常见问题
-- **性能优化建议**: 提供字符串拼接、列表推导等优化建议
-- **安全漏洞扫描**: 检测eval、exec、硬编码密码等安全风险
-- **AI增强分析**: 支持OpenAI API，提供智能代码改进建议
+- 🔍 **代码风格检查** - 行长度、缩进、TODO 注释等
+- 🐛 **潜在 Bug 检测** - 语法错误模式、异常处理问题、变量使用等
+- ⚡ **性能优化建议** - 字符串拼接、循环优化等
+- 📊 **详细报告** - 按严重程度分类，支持 JSON 输出
 
 ## 安装
 
@@ -16,138 +15,100 @@
 pip install -r requirements.txt
 ```
 
-## 配置
-
-### 环境变量
-
-设置OpenAI API Key以启用AI增强分析：
-
-```bash
-# Linux/Mac
-export OPENAI_API_KEY=your_api_key_here
-
-# Windows (CMD)
-set OPENAI_API_KEY=your_api_key_here
-
-# Windows (PowerShell)
-$env:OPENAI_API_KEY="your_api_key_here"
-```
-
 ## 使用方法
 
-### Python 代码
+### 审查单个文件
 
-```python
-from main import CodeReviewer
-
-# 创建审查器
-reviewer = CodeReviewer()
-
-# 分析代码
-code = """
-def hello():
-    print("Hello World")
-"""
-results = reviewer.analyze_code(code, "python")
-print(results)
-```
-
-### 命令行使用
-
-```python
-# 在 main.py 中添加命令行接口
-if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1:
-        file_path = sys.argv[1]
-        reviewer = CodeReviewer()
-        results = reviewer.review_file(file_path)
-        print_review_results(results)
-    else:
-        main()
-```
-
-运行:
 ```bash
-python main.py your_file.py
+python main.py your_code.py
 ```
 
-### 审查目录
+### 审查目录（递归）
 
-```python
-from main import CodeReviewer
+```bash
+python main.py ./src -r
+```
 
-reviewer = CodeReviewer()
-results = reviewer.review_directory("your_project_folder/")
+### 指定文件类型
+
+```bash
+python main.py ./project -r -e .py .js .java
+```
+
+### 输出 JSON 报告
+
+```bash
+python main.py ./src -r -o report.json
+```
+
+### 演示模式
+
+直接运行查看示例：
+
+```bash
+python main.py
 ```
 
 ## 输出示例
 
 ```
 ============================================================
-📋 代码审查结果
+📄 文件: example.py
+📊 总行数: 25
+⚠️  问题数: 3
+   🔴 高危: 1  |  🟡 中危: 1  |  🟢 低危: 1
 ============================================================
 
-🎨 代码风格问题:
-  ⚠️ 第15行 行超过120字符 (当前: 145)
+🔴 🐛 [HIGH] 第 12 行
+   问题: 可能的赋值错误: 连续使用 ==
+   建议: 检查是否应为单独的比较
 
-🐛 潜在Bug:
-  ❌ 第3行 避免使用可变对象作为默认参数
-  ⚠️ 第12行 使用 'is None' 而非 '== None'
+🟡 ⚡ [MEDIUM] 全局
+   问题: 检测到循环中的字符串拼接
+   建议: 使用 list + join() 或列表推导式替代
 
-⚡ 性能优化:
-  ℹ️  使用 f-string 或 str.join() 代替 + 号拼接字符串
-
-🔒 安全问题:
-  ❌ 第25行 使用eval()可能造成安全风险
-  ❌ 第26行 硬编码密码存在安全风险
-
-============================================================
-共发现 5 个问题
-============================================================
+🟢 📝 [LOW] 第 5 行
+   问题: 变量名 'tmp' 可能未使用
+   建议: 使用 _ 前缀标记为有意未使用的变量
 ```
 
-## 支持的语言
+## 项目结构
 
-- Python (.py)
-- JavaScript (.js)
-- TypeScript (.ts)
-- Java (.java)
-- C/C++ (.c, .cpp)
-- Go (.go)
-- Rust (.rs)
+```
+ai-code-reviewer/
+├── main.py              # 核心代码
+├── README.md            # 项目说明
+└── requirements.txt     # 依赖列表
+```
 
-## 检查项目
+## 检查项
 
 ### 代码风格
-- 行长度限制 (默认120字符)
-- 末尾空格检测
-- 缩进规范性 (Python)
-- import语句顺序
+- 行长度限制（>120 字符警告）
+- 行尾空格
+- TODO/FIXME 注释
+- 嵌套深度
+- 函数长度
 
-### 潜在Bug
-- 可变默认参数
-- None比较方式
-- 裸except语句
-- 未使用变量
+### 潜在 Bug
+- `==` 与 `=` 混用
+- 空的 except 块
+- 变量命名问题
+- 字符串拼接方式
 
 ### 性能优化
-- 字符串拼接方式
-- 列表推导式 vs map()
-- 重复查找优化
+- 循环中的字符串拼接
+- 重复计算
+- 多次 append 操作
 
-### 安全问题
-- eval/exec 使用
-- os.system 调用
-- shell=True 风险
-- 硬编码密码/API Key
-- SQL注入风险
+## 依赖
+
+- Python 3.8+
+
+## 作者
+
+- 邮箱: 196408245@qq.com
 
 ## 许可证
 
 MIT License
-
-## 作者
-
-196408245@qq.com

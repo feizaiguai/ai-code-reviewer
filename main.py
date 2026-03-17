@@ -1,403 +1,424 @@
 """
-AI Code Reviewer - 智能代码审查工具
-自动分析代码并提供风格、潜在bug和性能优化建议
+AI Code Reviewer - 自动代码审查工具
+作者: 196408245@qq.com
+功能: 分析代码并给出 review 建议（代码风格、潜在bug、性能优化）
 """
 
 import os
 import re
-import sys
+import ast
+import json
 from pathlib import Path
 from typing import Dict, List, Optional
-
-# 尝试导入可选依赖
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
-
-try:
-    import anthropic
-    ANTHROPIC_AVAILABLE = True
-except ImportError:
-    ANTHROPIC_AVAILABLE = False
+from dataclasses import dataclass, asdict
 
 
-class CodeReviewer:
-    """代码审查类"""
+@dataclass
+class ReviewIssue:
+    """代码问题"""
+    severity: str  # high, medium, low
+    category: str  # style, bug, performance, security
+    line: int
+    message: str
+    suggestion: str
+
+
+@dataclass
+class ReviewResult:
+    """审查结果"""
+    file_path: str
+    total_lines: int
+    issues: List[ReviewIssue]
+    summary: Dict[str, int]
+
+
+class CodeStyleChecker:
+    """代码风格检查器"""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo"):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.model = model
-        self.client = None
-        
-        if self.api_key and OPENAI_AVAILABLE:
-            self.client = OpenAI(api_key=self.api_key)
-    
-    def analyze_code(self, code: str, language: str = "python") -> Dict[str, any]:
-        """分析代码并返回审查结果"""
-        results = {
-            "style_issues": self._check_style(code, language),
-            "potential_bugs": self._check_potential_bugs(code, language),
-            "performance_tips": self._check_performance(code, language),
-            "security_issues": self._check_security(code, language),
-            "ai_suggestions": None
-        }
-        
-        # 如果有API密钥，尝试使用AI增强分析
-        if self.client:
-            results["ai_suggestions"] = self._get_ai_suggestions(code, language)
-        
-        return results
-    
-    def _check_style(self, code: str, language: str) -> List[Dict]:
-        """检查代码风格问题"""
+    def check(self, code: str, filepath: str) -> List[ReviewIssue]:
         issues = []
         lines = code.split('\n')
         
         for i, line in enumerate(lines, 1):
             # 检查行长度
             if len(line) > 120:
-                issues.append({
-                    "line": i,
-                    "severity": "warning",
-                    "type": "line_too_long",
-                    "message": f"行超过120字符 (当前: {len(line)})"
-                })
+                issues.append(ReviewIssue(
+                    severity="low",
+                    category="style",
+                    line=i,
+                    message=f"行过长 ({len(line)} 字符)",
+                    suggestion="建议将单行控制在 120 字符以内"
+                ))
             
-            # 检查末尾空格
+            # 检查缩进（应使用 4 空格）
+            if line.startswith(' ' * 1) or line.startswith(' ' * 2):
+                if '\t' not in line and line.strip():
+                    pass  # 允许 2 空格缩进
+            
+            # 检查行尾空格
             if line.rstrip() != line:
-                issues.append({
-                    "line": i,
-                    "severity": "info",
-                    "type": "trailing_whitespace",
-                    "message": "行末有多余空格"
-                })
+                issues.append(ReviewIssue(
+                    severity="low",
+                    category="style",
+                    line=i,
+                    message="行尾存在多余空格",
+                    suggestion="删除行尾空格"
+                ))
             
-            # Python特定检查
-            if language == "python":
-                if line.startswith(' ') or line.startswith('\t'):
-                    if not line.strip().startswith('#') and not line.strip().startswith('"""'):
-                        if len(line) - len(line.lstrip()) % 4 != 0:
-                            issues.append({
-                                "line": i,
-                                "severity": "warning",
-                                "type": "indentation",
-                                "message": "缩进应为4的倍数"
-                            })
-                
-                # 检查import顺序
-                if line.strip().startswith('import ') or line.strip().startswith('from '):
-                    if i > 1:
-                        prev_line = lines[i-2].strip() if i > 1 else ""
-                        if prev_line and not prev_line.startswith('import') and not prev_line.startswith('from'):
-                            if not any(l.strip().startswith('import') or l.strip().startswith('from') for l in lines[max(0,i-10):i-1]):
-                                issues.append({
-                                    "line": i,
-                                    "severity": "info",
-                                    "type": "import_order",
-                                    "message": "import语句应放在文件顶部"
-                                })
+            # 检查 TODO/FIXME 注释
+            if re.search(r'(TODO|FIXME|HACK|XXX):?', line, re.IGNORECASE):
+                issues.append(ReviewIssue(
+                    severity="medium",
+                    category="style",
+                    line=i,
+                    message="存在未完成的 TODO/FIXME 注释",
+                    suggestion="尽快完成或创建 Issue 跟踪"
+                ))
         
         return issues
+
+
+class BugDetector:
+    """潜在 Bug 检测器"""
     
-    def _check_potential_bugs(self, code: str, language: str) -> List[Dict]:
-        """检查潜在bug"""
+    def check(self, code: str, filepath: str) -> List[ReviewIssue]:
         issues = []
         lines = code.split('\n')
         
         for i, line in enumerate(lines, 1):
-            # Python特定bug检查
-            if language == "python":
-                # 检查可变默认参数
-                if re.search(r'def\s+\w+\s*\([^)]*=\s*\[\s*\]', line) or \
-                   re.search(r'def\s+\w+\s*\([^)]*=\s*\{\s*\}', line):
-                    issues.append({
-                        "line": i,
-                        "severity": "error",
-                        "type": "mutable_default_arg",
-                        "message": "避免使用可变对象作为默认参数"
-                    })
-                
-                # 检查 == None 而非 is None
-                if re.search(r'==\s*None', line):
-                    issues.append({
-                        "line": i,
-                        "severity": "warning",
-                        "type": "none_comparison",
-                        "message": "使用 'is None' 而非 '== None'"
-                    })
-                
-                # 检查 except 子句没有具体异常类型
-                if 'except:' in line and i < len(lines):
-                    next_lines = '\n'.join(lines[i:min(i+3, len(lines))])
-                    if 'except' in next_lines and 'Exception' not in next_lines and 'Error' not in next_lines:
-                        issues.append({
-                            "line": i,
-                            "severity": "warning",
-                            "type": "bare_except",
-                            "message": "避免使用裸except语句，指定具体异常类型"
-                        })
-                
-                # 检查未使用的变量
-                var_match = re.search(r'^(\s*)(\w+)\s*=', line)
-                if var_match and 'if' not in line and 'elif' not in line:
-                    var_name = var_match.group(2)
-                    if not var_name.startswith('_') and var_name.islower():
-                        # 简化检查：同一行后没有使用
-                        if var_name not in line[line.index('=')+1:]:
-                            issues.append({
-                                "line": i,
-                                "severity": "info",
-                                "type": "unused_variable",
-                                "message": f"变量 '{var_name}' 可能未使用或拼写错误"
-                            })
+            # 检测 == 与 = 混用
+            if re.search(r'if\s+\w+\s*==\s*\w+\s*==', line):
+                issues.append(ReviewIssue(
+                    severity="high",
+                    category="bug",
+                    line=i,
+                    message="可能的赋值错误: 连续使用 ==",
+                    suggestion="检查是否应为单独的比较"
+                ))
+            
+            # 检测 except pass
+            if re.search(r'except.*:\s*$', line) or 'except:\n' in code[max(0, code.find(line)-50):code.find(line)+len(line)+10]:
+                if i < len(lines) and lines[i].strip() == 'pass':
+                    issues.append(ReviewIssue(
+                        severity="high",
+                        category="bug",
+                        line=i,
+                        message="检测到空的 except 块",
+                        suggestion="至少记录日志或重新抛出异常"
+                    ))
+            
+            # 检测未使用的变量
+            if re.match(r'^\s*_\w*\s*=', line) or re.match(r'^\s*[^_\s]\w*\s*=\s*[^=]', line):
+                var_match = re.match(r'^\s*(\w+)\s*=', line)
+                if var_match and var_match.group(1) in ['temp', 'tmp', 'unused']:
+                    issues.append(ReviewIssue(
+                        severity="low",
+                        category="bug",
+                        line=i,
+                        message=f"变量名 '{var_match.group(1)}' 可能未使用",
+                        suggestion="使用 _ 前缀标记为有意未使用的变量"
+                    ))
+            
+            # 检测硬编码的字符串拼接
+            if "' '" in line or '" "' in line:
+                issues.append(ReviewIssue(
+                    severity="medium",
+                    category="bug",
+                    line=i,
+                    message="可能使用了字符串拼接而非格式化",
+                    suggestion="使用 f-string、format() 或 join() 方法"
+                ))
         
         return issues
+
+
+class PerformanceAnalyzer:
+    """性能分析器"""
     
-    def _check_performance(self, code: str, language: str) -> List[Dict]:
-        """检查性能问题"""
+    def check(self, code: str, filepath: str) -> List[ReviewIssue]:
         issues = []
         
-        # Python性能检查
-        if language == "python":
-            # 检查字符串拼接
-            if '+' in code and "string" in code.lower():
-                issues.append({
-                    "line": 0,
-                    "severity": "info",
-                    "type": "string_concatenation",
-                    "message": "使用 f-string 或 str.join() 代替 + 号拼接字符串"
-                })
-            
-            # 检查 list comprehension vs map
-            if re.search(r'list\s*\(\s*map\s*\(', code):
-                issues.append({
-                    "line": 0,
-                    "severity": "info",
-                    "type": "list_comprehension",
-                    "message": "考虑使用列表推导式代替 list(map())"
-                })
-            
-            # 检查重复的列表查找
-            if code.count('.index(') > 1 or code.count('.find(') > 1:
-                issues.append({
-                    "line": 0,
-                    "severity": "info",
-                    "type": "repeated_lookup",
-                    "message": "避免在循环中重复查找，可先存储结果"
-                })
+        # 检测字符串拼接在循环中
+        if re.search(r'for\s+.*:\s*\n\s*.*\+\=', code) and '+ "' in code:
+            issues.append(ReviewIssue(
+                severity="medium",
+                category="performance",
+                line=0,
+                message="检测到循环中的字符串拼接",
+                suggestion="使用 list + join() 或列表推导式替代"
+            ))
         
-        return issues
-    
-    def _check_security(self, code: str, language: str) -> List[Dict]:
-        """检查安全问题"""
-        issues = []
-        
-        # 通用安全检查
-        dangerous_patterns = [
-            (r'eval\s*\(', '使用eval()可能造成安全风险', 'error'),
-            (r'exec\s*\(', '使用exec()可能造成安全风险', 'error'),
-            (r'os\.system\s*\(', '使用os.system()需谨慎验证输入', 'warning'),
-            (r'subprocess\.\w+\s*\([^)]*shell\s*=\s*True', 'shell=True存在安全风险', 'error'),
-            (r'password\s*=\s*["\'][^"\']+["\']', '硬编码密码存在安全风险', 'error'),
-            (r'api[_-]?key\s*=\s*["\'][^"\']+["\']', '硬编码API密钥存在安全风险', 'error'),
-            (r'SQL\s', 'SQL语句需使用参数化查询防止注入', 'warning'),
+        # 检测重复计算
+        patterns = [
+            (r'len\([^)]+\)\s+in\s+', '在条件中重复计算长度'),
+            (r'\.append\([^)]+\)\s*\n\s*for', '考虑使用列表推导式'),
         ]
         
-        for pattern, message, severity in dangerous_patterns:
-            matches = re.finditer(pattern, code, re.IGNORECASE)
-            for match in matches:
-                line_num = code[:match.start()].count('\n') + 1
-                issues.append({
-                    "line": line_num,
-                    "severity": severity,
-                    "type": "security",
-                    "message": message
-                })
+        for pattern, msg in patterns:
+            if re.search(pattern, code):
+                issues.append(ReviewIssue(
+                    severity="medium",
+                    category="performance",
+                    line=0,
+                    message=msg,
+                    suggestion="优化以提高性能"
+                ))
+        
+        # 检测可迭代对象的重复迭代
+        if code.count('.append') > 3 and 'for' in code:
+            issues.append(ReviewIssue(
+                severity="low",
+                category="performance",
+                line=0,
+                message="多次 append 操作",
+                suggestion="考虑使用列表推导式一次性生成"
+            ))
+        
+        return issues
+
+
+class PythonAnalyzer:
+    """Python AST 深度分析"""
+    
+    def check(self, code: str, filepath: str) -> List[ReviewIssue]:
+        issues = []
+        
+        try:
+            tree = ast.parse(code)
+            
+            for node in ast.walk(tree):
+                # 检测嵌套过深
+                if isinstance(node, (ast.If, ast.For, ast.While)):
+                    depth = self._get_nesting_depth(node)
+                    if depth > 4:
+                        issues.append(ReviewIssue(
+                            severity="medium",
+                            category="style",
+                            line=node.lineno,
+                            message=f"嵌套深度过深 ({depth}层)",
+                            suggestion="考虑重构以提高可读性，使用函数提取或合并条件"
+                        ))
+                
+                # 检测过长函数
+                if isinstance(node, ast.FunctionDef):
+                    end_line = node.end_lineno or 0
+                    start_line = node.lineno
+                    func_length = end_line - start_line
+                    
+                    if func_length > 100:
+                        issues.append(ReviewIssue(
+                            severity="medium",
+                            category="style",
+                            line=node.lineno,
+                            message=f"函数 '{node.name}' 过长 ({func_length} 行)",
+                            suggestion="考虑拆分为更小的函数，每个函数不超过 100 行"
+                        ))
+                
+                # 检测过短变量名
+                if isinstance(node, ast.Name) and len(node.id) == 1:
+                    issues.append(ReviewIssue(
+                        severity="low",
+                        category="style",
+                        line=node.lineno,
+                        message=f"变量名 '{node.id}' 过短",
+                        suggestion="使用更有意义的变量名"
+                    ))
+        except SyntaxError:
+            pass
         
         return issues
     
-    def _get_ai_suggestions(self, code: str, language: str) -> Optional[str]:
-        """使用AI获取增强建议"""
-        if not self.client:
+    def _get_nesting_depth(self, node) -> int:
+        depth = 0
+        current = node
+        while hasattr(current, 'parent'):
+            if isinstance(current.parent, (ast.If, ast.For, ast.While, ast.With)):
+                depth += 1
+            current = current.parent
+        return depth
+
+
+class AICodeReviewer:
+    """AI 代码审查主类"""
+    
+    def __init__(self):
+        self.style_checker = CodeStyleChecker()
+        self.bug_detector = BugDetector()
+        self.performance_analyzer = PerformanceAnalyzer()
+        self.python_analyzer = PythonAnalyzer()
+    
+    def review_file(self, filepath: str) -> ReviewResult:
+        """审查单个文件"""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                code = f.read()
+        except Exception as e:
+            print(f"读取文件失败: {filepath} - {e}")
             return None
         
-        try:
-            prompt = f"""你是一个专业的代码审查员。请审查以下{language}代码，提供改进建议。
-重点关注：
-1. 代码可读性和风格
-2. 潜在的bug
-3. 性能优化
-4. 安全问题
-
-代码：
-```{language}
-{code}
-```
-
-请用中文回复，给出具体的改进建议。"""
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "你是一个严格的代码审查员。"},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1000,
-                temperature=0.7
-            )
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            return f"AI分析出错: {str(e)}"
-    
-    def review_file(self, file_path: str) -> Dict[str, any]:
-        """审查单个文件"""
-        if not os.path.exists(file_path):
-            return {"error": f"文件不存在: {file_path}"}
+        issues = []
+        issues.extend(self.style_checker.check(code, filepath))
+        issues.extend(self.bug_detector.check(code, filepath))
+        issues.extend(self.performance_analyzer.check(code, filepath))
         
-        with open(file_path, 'r', encoding='utf-8') as f:
-            code = f.read()
+        if filepath.endswith('.py'):
+            issues.extend(self.python_analyzer.check(code, filepath))
         
-        # 根据扩展名判断语言
-        ext = Path(file_path).suffix
-        language_map = {
-            '.py': 'python',
-            '.js': 'javascript',
-            '.ts': 'typescript',
-            '.java': 'java',
-            '.cpp': 'cpp',
-            '.c': 'c',
-            '.go': 'go',
-            '.rs': 'rust'
+        # 统计
+        summary = {
+            'high': sum(1 for i in issues if i.severity == 'high'),
+            'medium': sum(1 for i in issues if i.severity == 'medium'),
+            'low': sum(1 for i in issues if i.severity == 'low'),
+            'total': len(issues)
         }
-        language = language_map.get(ext, 'unknown')
         
-        return self.analyze_code(code, language)
+        return ReviewResult(
+            file_path=filepath,
+            total_lines=len(code.split('\n')),
+            issues=issues,
+            summary=summary
+        )
     
-    def review_directory(self, dir_path: str, extensions: List[str] = None) -> Dict[str, any]:
-        """审查目录下所有指定类型的文件"""
+    def review_directory(self, dirpath: str, extensions: List[str] = None) -> List[ReviewResult]:
+        """审查目录下的所有文件"""
         if extensions is None:
-            extensions = ['.py', '.js', '.ts', '.java']
+            extensions = ['.py', '.js', '.java', '.go', '.rs']
         
-        results = {}
+        results = []
         for ext in extensions:
-            for file_path in Path(dir_path).rglob(f'*{ext}'):
-                if file_path.is_file():
-                    relative_path = str(file_path.relative_to(dir_path))
-                    results[relative_path] = self.review_file(str(file_path))
+            for filepath in Path(dirpath).rglob(f'*{ext}'):
+                result = self.review_file(str(filepath))
+                if result:
+                    results.append(result)
         
         return results
-
-
-def print_review_results(results: Dict):
-    """打印审查结果"""
-    print("\n" + "="*60)
-    print("📋 代码审查结果")
-    print("="*60)
     
-    total_issues = 0
-    
-    for category, issues in [
-        ("🎨 代码风格问题", results.get("style_issues", [])),
-        ("🐛 潜在Bug", results.get("potential_bugs", [])),
-        ("⚡ 性能优化", results.get("performance_tips", [])),
-        ("🔒 安全问题", results.get("security_issues", []))
-    ]:
-        if issues:
-            print(f"\n{category}:")
-            for issue in issues:
-                total_issues += 1
-                severity_icon = {
-                    "error": "❌",
-                    "warning": "⚠️",
-                    "info": "ℹ️"
-                }.get(issue.get("severity"), "•")
+    def print_report(self, result: ReviewResult):
+        """打印审查报告"""
+        print("\n" + "="*60)
+        print(f"📄 文件: {result.file_path}")
+        print(f"📊 总行数: {result.total_lines}")
+        print(f"⚠️  问题数: {result.summary['total']}")
+        print(f"   🔴 高危: {result.summary['high']}  |  🟡 中危: {result.summary['medium']}  |  🟢 低危: {result.summary['low']}")
+        print("="*60)
+        
+        if result.issues:
+            # 按严重程度排序
+            severity_order = {'high': 0, 'medium': 1, 'low': 2}
+            sorted_issues = sorted(result.issues, key=lambda x: severity_order.get(x.severity, 3))
+            
+            for issue in sorted_issues:
+                severity_icon = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(issue.severity, '⚪')
+                category_icon = {'style': '📝', 'bug': '🐛', 'performance': '⚡', 'security': '🔒'}.get(issue.category, '📌')
                 
-                line_info = f"第{issue['line']}行" if issue.get("line", 0) > 0 else ""
-                print(f"  {severity_icon} {line_info} {issue['message']}")
-    
-    if total_issues == 0:
-        print("\n✅ 太棒了！没有发现问题！")
-    
-    # 打印AI建议
-    if results.get("ai_suggestions"):
-        print("\n" + "-"*60)
-        print("🤖 AI 智能建议:")
-        print("-"*60)
-        print(results["ai_suggestions"])
-    
-    print("\n" + "="*60)
-    print(f"共发现 {total_issues} 个问题")
-    print("="*60)
+                line_info = f"第 {issue.line} 行" if issue.line > 0 else "全局"
+                print(f"\n{severity_icon} {category_icon} [{issue.severity.upper()}] {line_info}")
+                print(f"   问题: {issue.message}")
+                print(f"   建议: {issue.suggestion}")
+        
+        print()
 
 
 def main():
     """主函数"""
-    print("""
-╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║              🤖 AI Code Reviewer                         ║
-║              智能代码审查工具 v1.0                        ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
-    """)
+    import argparse
     
-    # 检查API配置
-    api_key = os.getenv("OPENAI_API_KEY")
-    if api_key:
-        print("✅ 已检测到 OpenAI API Key，将提供AI增强分析")
-    else:
-        print("⚠️  未设置 OPENAI_API_KEY，将仅使用静态分析")
+    parser = argparse.ArgumentParser(description='AI Code Reviewer - 智能代码审查工具')
+    parser.add_argument('path', nargs='?', help='文件或目录路径')
+    parser.add_argument('-r', '--recursive', action='store_true', help='递归审查目录')
+    parser.add_argument('-e', '--extensions', nargs='+', default=['.py'], help='要审查的文件扩展名')
+    parser.add_argument('-o', '--output', help='输出报告到文件 (JSON格式)')
+    parser.add_argument('--no-color', action='store_true', help='禁用彩色输出')
     
-    # 示例代码
-    sample_code = '''
+    args = parser.parse_args()
+    
+    reviewer = AICodeReviewer()
+    
+    if not args.path:
+        # 演示模式
+        print("\n🎯 AI Code Reviewer - 演示模式\n")
+        demo_code = '''
 import os
-from typing import List
 
-def process_data(data=[]):
-    """处理数据"""
-    result = []
+def process_data(data, tmp):
+    result = ""
     for item in data:
-        if item == None:
-            item = "default"
-        result.append(item)
-    
-    # 字符串拼接
-    output = ""
-    for r in result:
-        output = output + r + ","
-    
-    # 安全问题
-    code = eval("os.system('ls')")
-    password = "hardcoded123"
-    
-    return output
+        result += item
+    return result
 
-# 裸except
-try:
-    x = 1/0
-except:
-    pass
+def example():
+    x = 5
+    if x == 10 == 20:
+        pass
+    return x
+
+class MyClass:
+    def __init__(self):
+        self.value = 1
+    
+    def compute(self, data=[]):
+        for i in data:
+            print(i)
+        return self.value
 '''
-    
-    print("\n📝 示例代码审查:\n")
-    print(sample_code)
-    
-    # 创建审查器
-    reviewer = CodeReviewer(api_key=api_key)
-    
-    # 审查示例代码
-    results = reviewer.analyze_code(sample_code, "python")
-    print_review_results(results)
-    
-    # 演示文件审查
-    print("\n\n📁 文件审查示例:")
-    print("使用 reviewer.review_file('your_file.py') 审查指定文件")
-    print("使用 reviewer.review_directory('your_folder/') 审查整个目录")
+        
+        # 写入临时文件进行演示
+        demo_file = 'demo_code.py'
+        with open(demo_file, 'w', encoding='utf-8') as f:
+            f.write(demo_code)
+        
+        result = reviewer.review_file(demo_file)
+        reviewer.print_report(result)
+        
+        # 清理
+        os.remove(demo_file)
+        
+        print("\n💡 使用方法:")
+        print("   python main.py <文件路径>")
+        print("   python main.py <目录路径> -r")
+        print("   python main.py . -r -e .py .js")
+        
+    else:
+        path = Path(args.path)
+        
+        if path.is_file():
+            result = reviewer.review_file(str(path))
+            if result:
+                reviewer.print_report(result)
+                
+                if args.output:
+                    with open(args.output, 'w', encoding='utf-8') as f:
+                        json.dump({
+                            'file_path': result.file_path,
+                            'total_lines': result.total_lines,
+                            'summary': result.summary,
+                            'issues': [asdict(issue) for issue in result.issues]
+                        }, f, indent=2, ensure_ascii=False)
+                    print(f"\n📄 报告已保存到: {args.output}")
+        
+        elif path.is_dir():
+            results = reviewer.review_directory(str(path), args.extensions)
+            
+            for result in results:
+                reviewer.print_report(result)
+            
+            # 汇总统计
+            total_issues = sum(r.summary['total'] for r in results)
+            if total_issues > 0:
+                print("\n" + "="*60)
+                print(f"📊 汇总: 审查了 {len(results)} 个文件，共发现 {total_issues} 个问题")
+                print("="*60)
+            
+            if args.output:
+                with open(args.output, 'w', encoding='utf-8') as f:
+                    json.dump([{
+                        'file_path': r.file_path,
+                        'total_lines': r.total_lines,
+                        'summary': r.summary,
+                        'issues': [asdict(issue) for issue in r.issues]
+                    } for r in results], f, indent=2, ensure_ascii=False)
+                print(f"\n📄 报告已保存到: {args.output}")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
