@@ -1,0 +1,10 @@
+# AI Code Reviewer Dependencies
+
+# OpenAI API (可选 - 用于AI增强分析)
+openai>=1.0.0
+
+# 或者使用 Anthropic (可选)
+# anthropic>=0.8.0
+
+# 基础依赖
+pathlib2>=2.3.0  # Python 2 兼容性
