@@ -3,26 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ai Code Reviewer - by Daomei</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'Segoe UI', sans-serif;
-  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
-  min-height: 100vh; display: flex; justify-content: center; align-items: center; color: #fff; }
-.container { background: rgba(255,255,255,0.05); backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.1); border-radius: 24px;
-  padding: 2.5rem; width: 500px; max-width: 95vw; text-align: center; }
-h1 { font-size: 2rem; margin-bottom: 1rem;
-  background: linear-gradient(to right, #f093fb, #f5576c);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-p { opacity: 0.7; line-height: 1.6; }
-</style>
+<title>AI代码审查器 - by Daomei</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="container">
-  <h1>🚀 Ai Code Reviewer</h1>
-  <p>A project built by Daomei AI Assistant</p>
-  <p style="margin-top:1rem;font-size:0.85rem;opacity:0.4;">Built with ❤️ by Daomei</p>
+  <h1>🚀 AI代码审查器</h1>
+  <p class="subtitle">A functional demo built by Daomei AI</p>
+  <div class="demo-area" id="demoArea">
+    <div class="feature-cards" id="features"></div>
+    <div class="interactive">
+      <input type="text" id="userInput" placeholder="Type something...">
+      <button onclick="processInput()">Run</button>
+    </div>
+    <div id="output" class="output"></div>
+  </div>
+  <div class="stats">
+    <span id="counter">Ready</span>
+    <span id="timer">0s</span>
+  </div>
 </div>
+<script src="app.js"></script>
 </body>
 </html>
